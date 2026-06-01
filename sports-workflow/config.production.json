@@ -1,0 +1,19 @@
+{
+  "_TODO": "Deploy SportsMarketV2 to ethereum-mainnet and replace sportsMarketAddress (currently 0x000...000 placeholder) before activating this target.",
+  "evms": [
+    {
+      "chainSelectorName": "ethereum-mainnet",
+      "sportsMarketAddress": "0x0000000000000000000000000000000000000000",
+      "gasLimit": "500000"
+    }
+  ],
+  "sportSources": {
+    "NBA": ["espn", "thesportsdb", "nba_stats"],
+    "MLB": ["espn", "thesportsdb", "mlb_official"],
+    "NHL": ["espn", "thesportsdb", "nhl_official"],
+    "NFL": ["espn", "thesportsdb"],
+    "UCL": ["espn", "thesportsdb"],
+    "WC": ["espn", "thesportsdb"]
+  },
+  "aggregationMode": "majority"
+}

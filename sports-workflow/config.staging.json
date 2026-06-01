@@ -1,0 +1,18 @@
+{
+  "evms": [
+    {
+      "chainSelectorName": "ethereum-testnet-sepolia",
+      "sportsMarketAddress": "0xc49680982be8ab475Ac643Ea4C1a7d78651562b9",
+      "gasLimit": "500000"
+    }
+  ],
+  "sportSources": {
+    "NBA": ["espn", "thesportsdb", "nba_stats"],
+    "MLB": ["espn", "thesportsdb", "mlb_official"],
+    "NHL": ["espn", "thesportsdb", "nhl_official"],
+    "NFL": ["espn", "thesportsdb"],
+    "UCL": ["espn", "thesportsdb"],
+    "WC": ["espn", "thesportsdb"]
+  },
+  "aggregationMode": "majority"
+}
