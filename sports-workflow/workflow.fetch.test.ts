@@ -21,38 +21,45 @@ const makeSendRequester = (body: unknown, statusCode = 200) =>
 
 // ─── ESPN body builders ───────────────────────────────────────
 
+// Real ESPN summary?event= responses nest everything under .header.competitions[0]
+// (status.type + competitors), NOT at top level. Fixtures match that shape.
 const scoreBody = (
   homeScore: string | undefined,
   awayScore: string | undefined,
   shortDetail = 'Final',
 ) => ({
-  status: { type: { completed: true, shortDetail } },
-  competitions: [
-    {
-      competitors: [
-        { homeAway: 'home', score: homeScore },
-        { homeAway: 'away', score: awayScore },
-      ],
-    },
-  ],
+  header: {
+    competitions: [
+      {
+        status: { type: { completed: true, shortDetail } },
+        competitors: [
+          { homeAway: 'home', score: homeScore },
+          { homeAway: 'away', score: awayScore },
+        ],
+      },
+    ],
+  },
 })
 
+// shootoutScore is a JSON number in real responses (e.g. 4.0), not a string.
 const soccerBody = (
   homeScore: string | undefined,
   awayScore: string | undefined,
   shortDetail = 'FT',
-  shootoutHome?: string,
-  shootoutAway?: string,
+  shootoutHome?: number,
+  shootoutAway?: number,
 ) => ({
-  status: { type: { completed: true, shortDetail } },
-  competitions: [
-    {
-      competitors: [
-        { homeAway: 'home', score: homeScore, ...(shootoutHome != null ? { shootoutScore: shootoutHome } : {}) },
-        { homeAway: 'away', score: awayScore, ...(shootoutAway != null ? { shootoutScore: shootoutAway } : {}) },
-      ],
-    },
-  ],
+  header: {
+    competitions: [
+      {
+        status: { type: { completed: true, shortDetail } },
+        competitors: [
+          { homeAway: 'home', score: homeScore, ...(shootoutHome != null ? { shootoutScore: shootoutHome } : {}) },
+          { homeAway: 'away', score: awayScore, ...(shootoutAway != null ? { shootoutScore: shootoutAway } : {}) },
+        ],
+      },
+    ],
+  },
 })
 
 // ─── fetchEspnScore (NBA, MLB, NHL, NFL) ──────────────────────
@@ -93,7 +100,7 @@ describe('fetchEspnScore', () => {
 
   test('throws when game is not yet final', () => {
     const body = scoreBody('12', '10', 'In Progress')
-    body.status.type.completed = false as any
+    body.header.competitions[0].status.type.completed = false as any
 
     expect(() =>
       fetchEspnScore(
@@ -109,8 +116,12 @@ describe('fetchEspnScore', () => {
     expect(() =>
       fetchEspnScore(
         makeSendRequester({
-          status:       { type: { completed: true } },
-          competitions: [{ competitors: [{ homeAway: 'home', score: '5' }, { homeAway: 'away', score: '3' }] }],
+          header: {
+            competitions: [{
+              status:      { type: { completed: true } },
+              competitors: [{ homeAway: 'home', score: '5' }, { homeAway: 'away', score: '3' }],
+            }],
+          },
         }),
         'https://espn.example/scoreboard/401766123',
         '401766123',
@@ -122,7 +133,7 @@ describe('fetchEspnScore', () => {
   test('throws when competitor structure is missing', () => {
     expect(() =>
       fetchEspnScore(
-        makeSendRequester({ status: { type: { completed: true, shortDetail: 'Final' } }, competitions: [] }),
+        makeSendRequester({ header: { competitions: [{ status: { type: { completed: true, shortDetail: 'Final' } }, competitors: [] }] } }),
         'https://espn.example/scoreboard/401766123',
         '401766123',
         {},
@@ -158,7 +169,7 @@ describe('fetchEspnSoccer', () => {
 
   test('parses shootout scores when present', () => {
     const result = fetchEspnSoccer(
-      makeSendRequester(soccerBody('1', '1', 'FT-Pens', '4', '3')),
+      makeSendRequester(soccerBody('1', '1', 'FT-Pens', 4, 3)),
       'https://espn.example/soccer/700123',
       '700123',
       {},
@@ -186,7 +197,7 @@ describe('fetchEspnSoccer', () => {
 
   test('throws when game is not yet final', () => {
     const body = soccerBody('0', '0')
-    body.status.type.completed = false as any
+    body.header.competitions[0].status.type.completed = false as any
 
     expect(() =>
       fetchEspnSoccer(
@@ -201,10 +212,13 @@ describe('fetchEspnSoccer', () => {
 
 // ─── TheSportsDB fixtures ─────────────────────────────────────
 
+// Real TheSportsDB lookupevent responses use short status codes ("FT"/"AET"/"PEN")
+// in strStatus, NOT "Match Finished". strProgress is null. The FT/AET/PEN signal
+// that drives the soccer shortDetail lives in strStatus.
 const tsdbScoreBody = (
   homeScore: string | null,
   awayScore: string | null,
-  strStatus = 'Match Finished',
+  strStatus = 'FT',
 ) => ({
   events: [{
     intHomeScore: homeScore,
@@ -216,8 +230,8 @@ const tsdbScoreBody = (
 const tsdbSoccerBody = (
   homeScore: string | null,
   awayScore: string | null,
-  strProgress = 'FT',
-  strStatus   = 'Match Finished',
+  strStatus = 'FT',
+  strProgress: string | null = null,
 ) => ({
   events: [{
     intHomeScore: homeScore,
@@ -325,21 +339,23 @@ describe('fetchThesportsdbSoccer', () => {
     expect(result.shootoutAway).toBe(0)
   })
 
-  test('throws on unrecognized strProgress', () => {
+  // A completed status with no soccer-result mapping (e.g. "Match Finished",
+  // accepted by P4 as complete but not in TSDB_SOCCER_PROGRESS) must throw.
+  test('throws on completed status with no soccer-result mapping', () => {
     expect(() =>
       fetchThesportsdbSoccer(
-        makeSendRequester(tsdbSoccerBody('1', '0', 'HT')),
+        makeSendRequester(tsdbSoccerBody('1', '0', 'Match Finished')),
         'https://thesportsdb.example/lookupevent?id=800001',
         '800001',
         {},
       ),
-    ).toThrow('TheSportsDB: unrecognized soccer progress "HT" for game 800001')
+    ).toThrow('TheSportsDB: unrecognized soccer status "Match Finished" for game 800001')
   })
 
-  test('throws when game status is not Match Finished', () => {
+  test('throws when game status is not a completion status', () => {
     expect(() =>
       fetchThesportsdbSoccer(
-        makeSendRequester(tsdbSoccerBody('0', '0', 'FT', 'Live')),
+        makeSendRequester(tsdbSoccerBody('0', '0', 'Live')),
         'https://thesportsdb.example/lookupevent?id=800001',
         '800001',
         {},

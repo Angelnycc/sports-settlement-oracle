@@ -135,30 +135,35 @@ describe('onSettlementRequested — on-chain guards', () => {
 
 // ─── ESPN body builders (duplicated from workflow.fetch.test.ts) ─────────────
 
+// Real ESPN summary?event= nests under .header.competitions[0] (status + competitors).
 const scoreBody = (
   home:        string | undefined,
   away:        string | undefined,
   shortDetail  = 'Final',
 ) => ({
-  status:       { type: { completed: true, shortDetail } },
-  competitions: [{ competitors: [
-    { homeAway: 'home', score: home },
-    { homeAway: 'away', score: away },
-  ]}],
+  header: { competitions: [{
+    status:      { type: { completed: true, shortDetail } },
+    competitors: [
+      { homeAway: 'home', score: home },
+      { homeAway: 'away', score: away },
+    ],
+  }]},
 })
 
 const soccerBody = (
   home:          string | undefined,
   away:          string | undefined,
   shortDetail    = 'FT',
-  shootoutHome?: string,
-  shootoutAway?: string,
+  shootoutHome?: number,
+  shootoutAway?: number,
 ) => ({
-  status:       { type: { completed: true, shortDetail } },
-  competitions: [{ competitors: [
-    { homeAway: 'home', score: home, ...(shootoutHome != null ? { shootoutScore: shootoutHome } : {}) },
-    { homeAway: 'away', score: away, ...(shootoutAway != null ? { shootoutScore: shootoutAway } : {}) },
-  ]}],
+  header: { competitions: [{
+    status:      { type: { completed: true, shortDetail } },
+    competitors: [
+      { homeAway: 'home', score: home, ...(shootoutHome != null ? { shootoutScore: shootoutHome } : {}) },
+      { homeAway: 'away', score: away, ...(shootoutAway != null ? { shootoutScore: shootoutAway } : {}) },
+    ],
+  }]},
 })
 
 // HttpActionsMock expects ResponseJson: body must be base64-encoded.
@@ -345,7 +350,7 @@ describe('onSettlementRequested — settlement execution', () => {
     mock.writeReport = (_input) => ({ txStatus: 'TX_STATUS_SUCCESS' })
 
     const httpMock = HttpActionsMock.testInstance()
-    httpMock.sendRequest = (_req) => httpBody(soccerBody('1', '1', 'FT-Pens', '4', '3'))
+    httpMock.sendRequest = (_req) => httpBody(soccerBody('1', '1', 'FT-Pens', 4, 3))
 
     const runtime = makeRuntimeForSport('UCL', ['espn', 'espn'])
 
@@ -382,10 +387,12 @@ describe('onSettlementRequested — settlement execution', () => {
 // ─── Provider body builders (duplicated from workflow.fetch.test.ts) ─────────
 // scoreBody / soccerBody already defined above for the ESPN-only CP5 tests.
 
+// Real TheSportsDB uses short status codes in strStatus ("FT"/"AET"/"PEN");
+// strProgress is null. strStatus drives both completion and soccer shortDetail.
 const tsdbScoreBody = (
   home:      string | null,
   away:      string | null,
-  strStatus  = 'Match Finished',
+  strStatus  = 'FT',
 ) => ({
   events: [{ intHomeScore: home, intAwayScore: away, strStatus }],
 })
@@ -393,8 +400,8 @@ const tsdbScoreBody = (
 const tsdbSoccerBody = (
   home:        string | null,
   away:        string | null,
-  strProgress  = 'FT',
-  strStatus    = 'Match Finished',
+  strStatus    = 'FT',
+  strProgress: string | null = null,
 ) => ({
   events: [{ intHomeScore: home, intAwayScore: away, strStatus, strProgress }],
 })

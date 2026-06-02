@@ -64,12 +64,12 @@ export const safeJsonStringify = (obj: unknown): string =>
 // ─── ESPN fetchers ────────────────────────────────────────────
 
 const ESPN_SPORT_URLS: Partial<Record<string, string>> = {
-  NBA: 'https://site2.api.espn.com/apis/site/v2/sports/basketball/nba/summary',
-  MLB: 'https://site2.api.espn.com/apis/site/v2/sports/baseball/mlb/summary',
-  NHL: 'https://site2.api.espn.com/apis/site/v2/sports/hockey/nhl/summary',
-  NFL: 'https://site2.api.espn.com/apis/site/v2/sports/football/nfl/summary',
-  UCL: 'https://site2.api.espn.com/apis/site/v2/sports/soccer/uefa.champions/summary',
-  WC:  'https://site2.api.espn.com/apis/site/v2/sports/soccer/fifa.world/summary',
+  NBA: 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary',
+  MLB: 'https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/summary',
+  NHL: 'https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/summary',
+  NFL: 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary',
+  UCL: 'https://site.api.espn.com/apis/site/v2/sports/soccer/uefa.champions/summary',
+  WC:  'https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/summary',
 }
 
 export const fetchEspnScore = (
@@ -88,7 +88,7 @@ export const fetchEspnScore = (
   const body = JSON.parse(Buffer.from(response.body).toString('utf-8'))
 
   const statusType: { completed?: boolean; shortDetail?: string } =
-    body.status?.type ?? body.competitions?.[0]?.status?.type ?? {}
+    body.header?.competitions?.[0]?.status?.type ?? {}
 
   if (statusType.completed !== true)
     throw new Error(`Game ${gameId} is not final`)
@@ -98,7 +98,7 @@ export const fetchEspnScore = (
     throw new Error(`Missing shortDetail for game ${gameId}`)
 
   const competitors: Array<{ homeAway: string; score?: string }> =
-    body.competitions?.[0]?.competitors ?? []
+    body.header?.competitions?.[0]?.competitors ?? []
 
   if (competitors.length < 2)
     throw new Error(`Unexpected competitor structure for game ${gameId}`)
@@ -134,7 +134,7 @@ export const fetchEspnSoccer = (
   const body = JSON.parse(Buffer.from(response.body).toString('utf-8'))
 
   const statusType: { completed?: boolean; shortDetail?: string } =
-    body.status?.type ?? body.competitions?.[0]?.status?.type ?? {}
+    body.header?.competitions?.[0]?.status?.type ?? {}
 
   if (statusType.completed !== true)
     throw new Error(`Game ${gameId} is not final`)
@@ -147,7 +147,7 @@ export const fetchEspnSoccer = (
     homeAway:       string
     score?:         string
     shootoutScore?: string
-  }> = body.competitions?.[0]?.competitors ?? []
+  }> = body.header?.competitions?.[0]?.competitors ?? []
 
   if (competitors.length < 2)
     throw new Error(`Unexpected competitor structure for game ${gameId}`)
@@ -322,13 +322,19 @@ export const fetchThesportsdbScore = (
   const body = JSON.parse(Buffer.from(response.body).toString('utf-8'))
   const ev   = parseTsdbEvent(body, gameId)
 
-  if (ev.strStatus !== 'Match Finished')
+  if (!TSDB_COMPLETE_STATUSES.has(ev.strStatus ?? ''))
     throw new Error(`TheSportsDB: game ${gameId} not final (status: ${ev.strStatus})`)
 
   return { ...tsdbScores(ev, gameId), shortDetail: 'Final' }
 }
 
-// Maps TheSportsDB strProgress to canonical soccer shortDetail.
+// TheSportsDB completion statuses. Real responses use short codes ("FT"/"AET"/
+// "PEN") in strStatus, never "Match Finished" — the latter is kept as a safety net.
+const TSDB_COMPLETE_STATUSES = new Set(['Match Finished', 'FT', 'AET', 'PEN'])
+
+// Maps TheSportsDB strStatus to canonical soccer shortDetail. (strProgress is null
+// in real responses; the FT/AET/PEN signal lives in strStatus — same field as the
+// completion check above.)
 // 'PEN' → 'FT-Pens': shootout scores are NOT present on the free tier.
 // fetchThesportsdbSoccer returns shootoutHome/Away = 0; outcomeSoccer will throw
 // (0 === 0) for 'FT-Pens' games, caught by the per-source try/catch. The
@@ -353,13 +359,13 @@ export const fetchThesportsdbSoccer = (
   const body = JSON.parse(Buffer.from(response.body).toString('utf-8'))
   const ev   = parseTsdbEvent(body, gameId)
 
-  if (ev.strStatus !== 'Match Finished')
+  if (!TSDB_COMPLETE_STATUSES.has(ev.strStatus ?? ''))
     throw new Error(`TheSportsDB: game ${gameId} not final (status: ${ev.strStatus})`)
 
-  const shortDetail = TSDB_SOCCER_PROGRESS[ev.strProgress ?? '']
+  const shortDetail = TSDB_SOCCER_PROGRESS[ev.strStatus ?? '']
   if (!shortDetail)
     throw new Error(
-      `TheSportsDB: unrecognized soccer progress "${ev.strProgress}" for game ${gameId}`,
+      `TheSportsDB: unrecognized soccer status "${ev.strStatus}" for game ${gameId}`,
     )
 
   return { ...tsdbScores(ev, gameId), shortDetail, shootoutHome: 0, shootoutAway: 0 }
@@ -512,7 +518,7 @@ const PROVIDER_REGISTRY: Record<ProviderName, ProviderSpec> = {
     buildUrl: (sport, gameId) => {
       const base = ESPN_SPORT_URLS[sport]
       if (!base) throw new Error(`ESPN: no URL configured for sport "${sport}"`)
-      return `${base}/${gameId}`
+      return `${base}?event=${gameId}`
     },
     fetchScore:    fetchEspnScore,
     fetchSoccer:   fetchEspnSoccer,
