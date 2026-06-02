@@ -63,7 +63,8 @@ export const safeJsonStringify = (obj: unknown): string =>
 
 // ─── ESPN fetchers ────────────────────────────────────────────
 
-const ESPN_SPORT_URLS: Partial<Record<string, string>> = {
+/** @internal — exported for tests */
+export const ESPN_SPORT_URLS: Partial<Record<string, string>> = {
   NBA: 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary',
   MLB: 'https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/summary',
   NHL: 'https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/summary',
@@ -513,7 +514,8 @@ export const fetchNhlOfficialScore = (
 // ─── Provider registry ────────────────────────────────────────
 // Declared above configSchema so superRefine() can reference it.
 
-const PROVIDER_REGISTRY: Record<ProviderName, ProviderSpec> = {
+/** @internal — exported for tests */
+export const PROVIDER_REGISTRY: Record<ProviderName, ProviderSpec> = {
   espn: {
     buildUrl: (sport, gameId) => {
       const base = ESPN_SPORT_URLS[sport]

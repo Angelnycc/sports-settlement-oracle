@@ -7,6 +7,8 @@ import {
   fetchNbaStatsScore,
   fetchMlbOfficialScore,
   fetchNhlOfficialScore,
+  ESPN_SPORT_URLS,
+  PROVIDER_REGISTRY,
 } from './workflow'
 
 const makeSendRequester = (body: unknown, statusCode = 200) =>
@@ -650,5 +652,187 @@ describe('fetchNhlOfficialScore', () => {
         {},
       ),
     ).toThrow('nhl_official: missing score for game 2024020001')
+  })
+})
+
+// ─── Regression tests — CP6.5 patches (P1-P5) ─────────────────
+// One test per patched bug. Each asserts the fix AND would fail on a revert.
+
+describe('Regression tests — CP6.5 patches', () => {
+  // R-P1: ESPN host must be site.api.espn.com, never the NXDOMAIN site2 host.
+  test('R-P1: all ESPN_SPORT_URLS use site.api.espn.com (not site2)', () => {
+    const urls = Object.values(ESPN_SPORT_URLS).filter((u): u is string => u != null)
+    expect(urls.length).toBeGreaterThan(0)
+    for (const url of urls) {
+      expect(url).toContain('site.api.espn.com')
+      expect(url).not.toContain('site2.api.espn.com')
+    }
+  })
+
+  // R-P2: buildUrl must use ?event= query-param, not a trailing path-segment.
+  test('R-P2: espn.buildUrl uses ?event= query-param form', () => {
+    const url = PROVIDER_REGISTRY.espn.buildUrl('NBA', '401873203')
+    expect(url).toContain('?event=401873203')
+    expect(url).not.toMatch(/\/401873203$/)
+  })
+
+  // R-P3: fetcher reads header-nested shape only; top-level shape is rejected.
+  test('R-P3: fetchEspnScore rejects top-level shape (no .header)', () => {
+    const topLevelBody = {
+      status:       { type: { completed: true, shortDetail: 'Final' } },
+      competitions: [{ competitors: [
+        { homeAway: 'home', score: '110' },
+        { homeAway: 'away', score: '107' },
+      ]}],
+    }
+    expect(() =>
+      fetchEspnScore(makeSendRequester(topLevelBody), 'https://espn.example', 'g1', {}),
+    ).toThrow('is not final')
+  })
+
+  test('R-P3: fetchEspnScore accepts header-nested shape', () => {
+    const result = fetchEspnScore(
+      makeSendRequester(scoreBody('110', '107')),
+      'https://espn.example',
+      'g1',
+      {},
+    )
+    expect(result).toEqual({ homeScore: 110, awayScore: 107, shortDetail: 'Final' })
+  })
+
+  // R-P4: completion status set accepts real codes; rejects in-progress states.
+  test('R-P4: fetchThesportsdbScore accepts all completion statuses', () => {
+    for (const status of ['FT', 'AET', 'PEN', 'Match Finished']) {
+      const result = fetchThesportsdbScore(
+        makeSendRequester(tsdbScoreBody('10', '8', status)),
+        'https://thesportsdb.example',
+        'g1',
+        {},
+      )
+      expect(result.homeScore).toBe(10)
+    }
+  })
+
+  test('R-P4: fetchThesportsdbScore rejects non-completion statuses', () => {
+    for (const status of ['Live', 'Not Started', 'In Progress', 'Postponed']) {
+      expect(() =>
+        fetchThesportsdbScore(
+          makeSendRequester(tsdbScoreBody('10', '8', status)),
+          'https://thesportsdb.example',
+          'g1',
+          {},
+        ),
+      ).toThrow(`not final (status: ${status})`)
+    }
+  })
+
+  // R-P5: soccer reads strStatus; strProgress cannot override it.
+  test('R-P5: fetchThesportsdbSoccer reads strStatus (PEN + null strProgress)', () => {
+    const result = fetchThesportsdbSoccer(
+      makeSendRequester(tsdbSoccerBody('1', '1', 'PEN')),
+      'https://thesportsdb.example',
+      'g1',
+      {},
+    )
+    expect(result.shortDetail).toBe('FT-Pens')
+  })
+
+  test('R-P5: strProgress="FT" cannot override strStatus="Live"', () => {
+    expect(() =>
+      fetchThesportsdbSoccer(
+        makeSendRequester(tsdbSoccerBody('1', '1', 'Live', 'FT')),
+        'https://thesportsdb.example',
+        'g1',
+        {},
+      ),
+    ).toThrow('not final (status: Live)')
+  })
+})
+
+// ─── Hardening — edge cases (E1-E7) ───────────────────────────
+
+describe('Hardening — HTTP failures and robustness', () => {
+  // Every fetcher, invoked with a failing status code, should surface that code.
+  const httpFailCases: Array<{ label: string; run: (code: number) => unknown }> = [
+    { label: 'fetchEspnScore',        run: (c) => fetchEspnScore(makeSendRequester({}, c), 'u', 'g', {}) },
+    { label: 'fetchEspnSoccer',       run: (c) => fetchEspnSoccer(makeSendRequester({}, c), 'u', 'g', {}) },
+    { label: 'fetchThesportsdbScore', run: (c) => fetchThesportsdbScore(makeSendRequester({}, c), 'u', 'g', {}) },
+    { label: 'fetchThesportsdbSoccer',run: (c) => fetchThesportsdbSoccer(makeSendRequester({}, c), 'u', 'g', {}) },
+    { label: 'fetchNbaStatsScore',    run: (c) => fetchNbaStatsScore(makeSendRequester({}, c), 'u', 'g', {}) },
+    { label: 'fetchMlbOfficialScore', run: (c) => fetchMlbOfficialScore(makeSendRequester({}, c), 'u', 'g', {}) },
+    { label: 'fetchNhlOfficialScore', run: (c) => fetchNhlOfficialScore(makeSendRequester({}, c), 'u', 'g', {}) },
+  ]
+
+  // E1 (429 rate-limit) + E2 (502/503/504 service-degraded).
+  for (const code of [429, 502, 503, 504]) {
+    for (const { label, run } of httpFailCases) {
+      test(`E1/E2: ${label} surfaces HTTP ${code}`, () => {
+        expect(() => run(code)).toThrow(String(code))
+      })
+    }
+  }
+
+  // E3: malformed JSON body (e.g. CDN returns HTML for a 502 but claims 200).
+  test('E3: fetchEspnScore throws on malformed JSON body', () => {
+    const badRequester = {
+      sendRequest: () => ({
+        result: () => ({ statusCode: 200, body: Buffer.from('not json {') }),
+      }),
+    } as any
+    expect(() => fetchEspnScore(badRequester, 'u', 'g', {})).toThrow()
+  })
+
+  // E4: score robustness — string vs number scores both parse identically.
+  test('E4: fetchEspnScore handles both string and number scores', () => {
+    const numericBody = {
+      header: { competitions: [{
+        status:      { type: { completed: true, shortDetail: 'Final' } },
+        competitors: [
+          { homeAway: 'home', score: 110 },
+          { homeAway: 'away', score: 107 },
+        ],
+      }]},
+    }
+    const fromString = fetchEspnScore(makeSendRequester(scoreBody('110', '107')), 'u', 'g', {})
+    const fromNumber = fetchEspnScore(makeSendRequester(numericBody), 'u', 'g', {})
+    expect(fromNumber).toEqual(fromString)
+    expect(fromNumber).toEqual({ homeScore: 110, awayScore: 107, shortDetail: 'Final' })
+  })
+
+  // E5: NHL shootout winner convention (winning team has +1 in final score).
+  test('E5: fetchNhlOfficialScore SO game — home (4) beats away (3)', () => {
+    const result = fetchNhlOfficialScore(
+      makeSendRequester(nhlOfficialBody(4, 3, 'OFF', 'SO')),
+      'u',
+      'g',
+      {},
+    )
+    expect(result.shortDetail).toBe('Final/SO')
+    expect(result.homeScore).toBeGreaterThan(result.awayScore)
+  })
+
+  // E6: both TSDB no-event paths (empty array and missing key) throw the same error.
+  test('E6: fetchThesportsdbScore throws on empty events array', () => {
+    expect(() =>
+      fetchThesportsdbScore(makeSendRequester({ events: [] }), 'u', 'g', {}),
+    ).toThrow('no event in response')
+  })
+
+  test('E6: fetchThesportsdbScore throws on missing events key', () => {
+    expect(() =>
+      fetchThesportsdbScore(makeSendRequester({}), 'u', 'g', {}),
+    ).toThrow('no event in response')
+  })
+
+  // E7: unknown extra response fields must not break parsing (forward-compat).
+  test('E7: fetchEspnScore ignores unknown extra fields', () => {
+    const bodyWithExtras = {
+      ...scoreBody('110', '107'),
+      boxscore:    { teams: [] },
+      gameSummary: { note: 'future field' },
+      pickcenter:  [],
+    }
+    const result = fetchEspnScore(makeSendRequester(bodyWithExtras), 'u', 'g', {})
+    expect(result).toEqual({ homeScore: 110, awayScore: 107, shortDetail: 'Final' })
   })
 })

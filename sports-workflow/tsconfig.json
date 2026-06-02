@@ -9,7 +9,14 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "types": []
+    "types": [],
+    "baseUrl": ".",
+    "paths": {
+      "viem":                  ["./node_modules/viem"],
+      "viem/*":                ["./node_modules/viem/*"],
+      "@chainlink/cre-sdk":    ["./node_modules/@chainlink/cre-sdk"],
+      "@chainlink/cre-sdk/*":  ["./node_modules/@chainlink/cre-sdk/*"]
+    }
   },
   "include": ["main.ts"]
 }

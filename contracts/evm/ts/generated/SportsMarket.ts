@@ -1,3 +1,4 @@
+// @ts-nocheck
 // Code generated — DO NOT EDIT.
 import {
   decodeEventLog,
