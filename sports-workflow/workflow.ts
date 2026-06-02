@@ -576,7 +576,8 @@ interface SportSpec {
   computeOutcome: (result: ScoreResult) => number
 }
 
-const SPORT_REGISTRY = {
+/** @internal — exported for tests and the dry-run script */
+export const SPORT_REGISTRY = {
   NBA: { type: 'score',  aggregation: scoreAgg,  computeOutcome: outcomeScoreNoDraw    },
   MLB: { type: 'score',  aggregation: scoreAgg,  computeOutcome: outcomeScoreNoDraw    },
   NHL: { type: 'score',  aggregation: scoreAgg,  computeOutcome: outcomeScoreNoDraw    },
